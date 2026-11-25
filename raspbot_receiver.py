@@ -360,6 +360,7 @@ def main():
     autonomy = AutonomousControl(TIMEOUT) if policy is not None else None
     interrupted_at = None
     recording_mode = None
+    controlled_recording = paired
     segment_started = float('inf')
 
     def drive(command):
@@ -390,7 +391,7 @@ def main():
                 elif paired:
                     print('Recording OFF. Use keyboard --record, then R to start or pause, M to change mode. Ctrl+C saves.', flush=True)
                 else:
-                    print('Recording starts on first movement. Interrupt to save early.', flush=True)
+                    print('Single NPZ: plain keyboard starts recording on movement. With keyboard --record, use R to start or pause.', flush=True)
 
             print(f'Listening on UDP {PORT}', flush=True)
             active = desired = b'STOP'
@@ -428,7 +429,7 @@ def main():
                         print('Command timeout', flush=True)
 
                 tagged = parse_recording_packet(packet)
-                if paired and tagged is not None:
+                if dataset is not None and tagged is not None:
                     candidate, revision, mode = tagged
                     if candidate in COMMANDS and (
                         recording_source is None or
@@ -439,12 +440,13 @@ def main():
                                 segment_id += 1
                                 segment_started = now
                             print(f'Recording: {MODE_NAMES[mode] if mode is not None else "OFF"}', flush=True)
+                        controlled_recording = True
                         recording_source = sender
                         recording_revision = revision
                         recording_mode = mode
                         command = candidate
-                elif paired and command in COMMANDS:
-                    # Plain packets may stop a paired run but never arm recording.
+                elif controlled_recording and command in COMMANDS:
+                    # Plain packets may stop a controlled recording run but never arm recording.
                     if command == b'STOP':
                         recording_source = None
                         recording_mode = None
@@ -543,7 +545,7 @@ def main():
                 if desired != active:
                     drive(desired)
                     active = desired
-                if paired:
+                if controlled_recording:
                     if recording_mode is None or frames[0][0] < segment_started:
                         continue
                     if dataset.started is None and active != b'STOP':
@@ -565,10 +567,10 @@ def main():
                     if (args.finish_on_interrupt and interrupted_at is not None
                             and stream.error is None):
                         frames = stream.snapshot(before=interrupted_at)
-                        if not paired or (recording_mode is not None and frames and frames[0][0] >= segment_started):
+                        if not controlled_recording or (recording_mode is not None and frames and frames[0][0] >= segment_started):
                             dataset.mark_finish(frames, interrupted_at)
                         else:
-                            print('Finish not marked: paired recording was off or switching modes.', flush=True)
+                            print('Finish not marked: controlled recording was off or switching modes.', flush=True)
                 finally:
                     stream.close()
                     if dataset is not None:

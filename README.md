@@ -48,7 +48,7 @@ data/
 - **Legacy**는 기존 키, 배열 순서, 명령 번호 체계를 사용한다. 저장 ON 동안의 정상과 복귀 샘플을 모두 포함한다.
 - **Mode**는 legacy의 모든 샘플과 필드를 동일하게 담고, `schema_version`, `modes` (0 NORMAL / 1 RECOVERY), `mode_names`, `segment_ids`, `session_id`, `legacy_filename`을 추가한다.
 - 저장 OFF 중의 재배치 데이터는 두 파일 모두에서 제외된다. ON 중의 자발적 STOP은 NPZ에 남을 수 있고 기존 및 새 주행 학습기 모두에서 제외된다. 피니시 표시는 필요할 때만 `--finish-on-interrupt`로 활성화한다.
-- 기존처럼 새 `--record DATASET.npz` 경로를 직접 지정하면 단일 legacy 기록이 가능하다. 이때는 PC에서 `--record`를 빼고 실행한다.
+- 기존처럼 새 `--record DATASET.npz` 경로를 직접 지정하면 단일 legacy 기록이 가능하다. PC에서 `--record`를 붙이면 R로 수집을 켜고 끌 수 있다. M으로 선택한 모드는 단일 legacy NPZ에는 저장되지 않는다. PC에서 `--record`를 빼면 첫 이동부터 자동 수집한다.
 
 ```bash
 python inspect_dataset.py data/mode/*.npz
