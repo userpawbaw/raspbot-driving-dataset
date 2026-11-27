@@ -13,11 +13,9 @@ KEYS = {'w': 'w', 's': 's', 'a': 'a', 'd': 'd',
 
 def command_for(pressed):
     pressed = {KEYS[key] for key in pressed if key in KEYS}
-    forward = int('w' in pressed) - int('s' in pressed)
-    turn = int('d' in pressed) - int('a' in pressed)
-    motion = {1: b'W', -1: b'S', 0: b''}[forward]
-    steering = {1: b'D', -1: b'A', 0: b''}[turn]
-    return motion + steering or b'STOP'
+    if len(pressed) != 1:
+        return b'STOP'
+    return pressed.pop().upper().encode('ascii')
 
 
 def main():
@@ -31,7 +29,7 @@ def main():
     window = tk.Tk()
     window.title('Raspbot keyboard test')
     instructions = ('Space starts or stops ONNX driving.' if args.auto else
-                    'Use WASD or arrow keys. Hold drive + steer together. Space stops.')
+                    'Use one WASD or arrow direction at a time. Multiple directions stop. Space stops.')
     tk.Label(window, text=instructions, padx=20, pady=20).pack()
     intent = tk.StringVar(value='ONNX driving stopped' if args.auto else 'Sent: STOP')
     tk.Label(window, textvariable=intent).pack()
