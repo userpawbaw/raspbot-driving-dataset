@@ -12,10 +12,9 @@ KEYS = {'w': 'w', 's': 's', 'a': 'a', 'd': 'd',
 
 
 def command_for(pressed):
-    pressed = {KEYS[key] for key in pressed if key in KEYS}
-    if len(pressed) != 1:
+    if not pressed:
         return b'STOP'
-    return pressed.pop().upper().encode('ascii')
+    return KEYS[next(reversed(pressed))].upper().encode('ascii')
 
 
 def main():
@@ -28,8 +27,9 @@ def main():
 
     window = tk.Tk()
     window.title('Raspbot keyboard test')
+    x11 = window.tk.call('tk', 'windowingsystem') == 'x11'
     instructions = ('Space starts or stops ONNX driving.' if args.auto else
-                    'Use one WASD or arrow direction at a time. Multiple directions stop. Space stops.')
+                    'Use WASD or arrow keys. Last pressed direction wins. Space stops.')
     tk.Label(window, text=instructions, padx=20, pady=20).pack()
     intent = tk.StringVar(value='ONNX driving stopped' if args.auto else 'Sent: STOP')
     tk.Label(window, textvariable=intent).pack()
@@ -46,7 +46,8 @@ def main():
     revision = 0
     controls_held = set()
     control_releases = {}
-    pressed = set()
+    pressed = {}  # Insertion order follows physical key presses.
+    movement_releases = {}
     blocked = set()
     latest_ack = b''
     last_reply = float('-inf')
@@ -129,9 +130,18 @@ def main():
                     elif key == 'm':
                         set_recording(enabled, 1 - mode)
                     send(command())
-            elif key in KEYS and key not in pressed and key not in blocked:
-                pressed.add(key)
-                send(command())
+            elif key in KEYS:
+                pending = movement_releases.pop(key, None)
+                if pending is not None:
+                    timer, released_at = pending
+                    window.after_cancel(timer)
+                    if released_at == event.time:
+                        return
+                    blocked.discard(key)
+                    pressed.pop(key, None)
+                if key not in pressed and key not in blocked:
+                    pressed[key] = None
+                    send(command())
 
         def release_control(key):
             controls_held.discard(key)
@@ -142,9 +152,21 @@ def main():
             if key in controls_held and key not in control_releases:
                 # X11 can emit a release/press pair on key repeat.
                 control_releases[key] = window.after(60, release_control, key)
+            if key not in pressed and key not in blocked:
+                return
+            if x11:
+                # X11 repeat can synthesize a release and press at the same timestamp.
+                if key not in movement_releases:
+                    timer = window.after(10, release_movement, key)
+                    movement_releases[key] = (timer, event.time)
+            else:
+                release_movement(key)
+
+        def release_movement(key):
+            movement_releases.pop(key, None)
             blocked.discard(key)
             if key in pressed:
-                pressed.remove(key)
+                del pressed[key]
                 send(command())
 
         def update():
@@ -186,6 +208,9 @@ def main():
             if args.auto:
                 return
             blocked.clear()
+            for timer, _ in movement_releases.values():
+                window.after_cancel(timer)
+            movement_releases.clear()
             controls_held.clear()
             for pending in control_releases.values():
                 window.after_cancel(pending)
