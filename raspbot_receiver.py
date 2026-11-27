@@ -13,6 +13,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from raspbot_autonomy import AutonomousControl, RUNNING
+from raspbot_context import MAX_TICK_GAP, context_rows, live_frames
 from raspbot_recording import MODE_NAMES, parse_recording_packet
 
 PORT = 5005
@@ -168,6 +169,7 @@ class Dataset:
             self.states = np.memmap(Path(self.spool.name) / 'frames.bin', mode='w+', shape=shape, dtype=np.uint8)
             self.modes = np.empty(limit, dtype=np.uint8)
             self.segment_ids = np.empty(limit, dtype=np.int32)
+            self.context_segment_ids = np.empty(limit, dtype=np.int32)
         else:
             self.states = np.empty(shape, dtype=np.uint8)
         self.actions = np.empty(limit, dtype=np.uint8)
@@ -190,7 +192,7 @@ class Dataset:
         self.finish_time = timestamp - self.started
         print('Finish marked from five camera frames.', flush=True)
 
-    def append(self, frames, command, timestamp, mode=None, segment=None):
+    def append(self, frames, command, timestamp, mode=None, segment=None, context_segment=None):
         if command not in ACTIONS or frames[-1][0] == self.last_frame:
             return
         n = self.count
@@ -201,6 +203,7 @@ class Dataset:
         if self.paired:
             self.modes[n] = mode
             self.segment_ids[n] = segment
+            self.context_segment_ids[n] = segment if context_segment is None else context_segment
         self.timestamps[n] = timestamp - self.started
         self.last_frame = frames[-1][0]
         self.count += 1
@@ -229,6 +232,9 @@ class Dataset:
         )
         if self.paired:
             paths = self.save_pair(payload)
+            coverage = context_rows(self.frame_timestamps[:n], self.context_segment_ids[:n])
+            common = (coverage['long'][:, 0] >= 0) & (coverage['hybrid'][:, 0] >= 0)
+            print(f'Context coverage (all three layouts): {common.sum()}/{n} recorded ticks', flush=True)
             for path in paths:
                 print(f'Saved {n} samples to {path.resolve()}', flush=True)
         else:
@@ -248,6 +254,7 @@ class Dataset:
                 payload, schema_version=2, session_id=uuid4().hex, legacy_filename=legacy.name,
                 modes=self.modes[:self.count], mode_names=MODE_NAMES,
                 segment_ids=self.segment_ids[:self.count],
+                context_segment_ids=self.context_segment_ids[:self.count],
             )
             self.write_outputs([(legacy, payload), (labeled, mode_payload)])
         return legacy, labeled
@@ -400,11 +407,13 @@ def main():
             finish_hits = 0
             finished = False
             last_policy_frame = None
+            policy_history = deque(maxlen=24)
             last_predicted_mode = None
             reverse_since = None
             recording_source = None
             recording_revision = -1
             segment_id = 0
+            context_segment_id = 0
             if stream is not None:
                 server.settimeout(0.01)
 
@@ -437,6 +446,11 @@ def main():
                     ):
                         if recording_source is None or revision != recording_revision or mode != recording_mode:
                             if mode is not None:
+                                continuous_mode_switch = (sender == recording_source and recording_mode is not None
+                                                          and mode != recording_mode
+                                                          and revision == recording_revision + 1)
+                                if not continuous_mode_switch:
+                                    context_segment_id += 1
                                 segment_id += 1
                                 segment_started = now
                             print(f'Recording: {MODE_NAMES[mode] if mode is not None else "OFF"}', flush=True)
@@ -459,6 +473,8 @@ def main():
                     if reply is not None and reply.startswith(RUNNING):
                         last_command = now
                     if not autonomy.started:
+                        policy_history.clear()
+                        last_policy_frame = None
                         if active != b'STOP':
                             drive(b'STOP')
                             active = b'STOP'
@@ -508,13 +524,25 @@ def main():
                     if frames[-1][0] == last_policy_frame:
                         continue
                     last_policy_frame = frames[-1][0]
-                    x = state_input([image for _, image in frames])
-                    target, predicted_mode = policy.predict(x)
+                    if policy_history and last_policy_frame - policy_history[-1][0] > MAX_TICK_GAP:
+                        policy_history.clear()
+                    policy_history.append(frames[-1])
+                    selected = live_frames(policy_history, frames, policy.context)
+                    if selected is None:
+                        if active != b'STOP':
+                            drive(b'STOP')
+                            active = b'STOP'
+                        reverse_since = None
+                        finish_hits = 0
+                        continue
+                    target, predicted_mode = policy.predict(state_input(selected))
                     if predicted_mode != last_predicted_mode:
                         print(f'Predicted mode: {predicted_mode}', flush=True)
                         last_predicted_mode = predicted_mode
                     if finish_policy is not None:
-                        finish_hits = finish_hits + 1 if finish_policy.finish_score(x) >= args.finish_threshold else 0
+                        finish_x = state_input([image for _, image in frames])
+                        finish_hits = (finish_hits + 1
+                                       if finish_policy.finish_score(finish_x) >= args.finish_threshold else 0)
                         if finish_hits >= 2:
                             finished = True
                             autonomy.stop()
@@ -548,12 +576,12 @@ def main():
                 if controlled_recording:
                     if recording_mode is None or frames[0][0] < segment_started:
                         continue
-                    if dataset.started is None and active != b'STOP':
+                    if dataset.started is None and (paired or active != b'STOP'):
                         dataset.started = timestamp
                 elif dataset.started is None and active != b'STOP':
                     dataset.started = timestamp
                 if dataset.started is not None:
-                    dataset.append(frames, active, timestamp, recording_mode, segment_id)
+                    dataset.append(frames, active, timestamp, recording_mode, segment_id, context_segment_id)
                     if dataset.count == args.samples:
                         break
     except KeyboardInterrupt:

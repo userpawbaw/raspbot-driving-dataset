@@ -2,13 +2,14 @@ import json
 
 import numpy as np
 
+from raspbot_context import FRAME_SHAPE, HISTORY_OFFSETS, SHORT_FRAMES, frame_count
 from raspbot_recording import MODE_NAMES
 
-STATE_SHAPE = (5, 3, 32, 32)
+STATE_SHAPE = (SHORT_FRAMES, *FRAME_SHAPE)
 
 
 def state_input(frames):
-    return np.asarray(frames, dtype=np.float32).reshape(1, 15, 32, 32) / 255.0
+    return np.asarray(frames, dtype=np.float32).reshape(1, -1, *FRAME_SHAPE[1:]) / 255.0
 
 
 class Policy:
@@ -20,6 +21,12 @@ class Policy:
         expected = 'finish' if finish else 'drive'
         if metadata.get('task') != expected:
             raise ValueError(f'{path}: expected a {expected} model')
+        self.context = metadata.get('frame_context', 'short')
+        if self.context not in HISTORY_OFFSETS or (finish and self.context != 'short'):
+            raise ValueError(f'{path}: invalid frame context {self.context}')
+        shape = self.session.get_inputs()[0].shape
+        if len(shape) != 4 or shape[1:] != [frame_count(self.context) * FRAME_SHAPE[0], *FRAME_SHAPE[1:]]:
+            raise ValueError(f'{path}: input shape does not match frame context {self.context}')
         self.modes = tuple(json.loads(metadata.get('mode_names', '[]')))
         self.outputs = [output.name for output in self.session.get_outputs()]
         self.action_output = 'logits' if 'logits' in self.outputs else self.outputs[0]
