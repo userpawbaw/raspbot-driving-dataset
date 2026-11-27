@@ -14,6 +14,7 @@ from uuid import uuid4
 
 from raspbot_autonomy import AutonomousControl, RUNNING
 from raspbot_context import MAX_TICK_GAP, context_rows, live_frames
+from raspbot_sampling import LiveSampler
 from raspbot_recording import MODE_NAMES, parse_recording_packet
 
 PORT = 5005
@@ -408,6 +409,7 @@ def main():
             finished = False
             last_policy_frame = None
             policy_history = deque(maxlen=24)
+            sampler = LiveSampler()
             last_predicted_mode = None
             reverse_since = None
             recording_source = None
@@ -474,6 +476,7 @@ def main():
                         last_command = now
                     if not autonomy.started:
                         policy_history.clear()
+                        sampler.clear()
                         last_policy_frame = None
                         if active != b'STOP':
                             drive(b'STOP')
@@ -527,7 +530,10 @@ def main():
                     if policy_history and last_policy_frame - policy_history[-1][0] > MAX_TICK_GAP:
                         policy_history.clear()
                     policy_history.append(frames[-1])
-                    selected = live_frames(policy_history, frames, policy.context)
+                    if policy.sampling_layout is None:
+                        selected = live_frames(policy_history, frames, policy.context)
+                    else:
+                        selected = sampler.select(frames, policy.sampling_layout)
                     if selected is None:
                         if active != b'STOP':
                             drive(b'STOP')

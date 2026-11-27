@@ -4,6 +4,7 @@ import numpy as np
 
 from raspbot_context import FRAME_SHAPE, HISTORY_OFFSETS, SHORT_FRAMES, frame_count
 from raspbot_recording import MODE_NAMES
+from raspbot_sampling import LAYOUTS
 
 STATE_SHAPE = (SHORT_FRAMES, *FRAME_SHAPE)
 
@@ -22,10 +23,17 @@ class Policy:
         if metadata.get('task') != expected:
             raise ValueError(f'{path}: expected a {expected} model')
         self.context = metadata.get('frame_context', 'short')
-        if self.context not in HISTORY_OFFSETS or (finish and self.context != 'short'):
-            raise ValueError(f'{path}: invalid frame context {self.context}')
+        self.sampling_layout = metadata.get('sampling_layout')
+        if self.sampling_layout is not None:
+            if finish or self.sampling_layout not in LAYOUTS:
+                raise ValueError(f'{path}: invalid sampling layout {self.sampling_layout}')
+            count = sum(LAYOUTS[self.sampling_layout][:2])
+        else:
+            if self.context not in HISTORY_OFFSETS or (finish and self.context != 'short'):
+                raise ValueError(f'{path}: invalid frame context {self.context}')
+            count = frame_count(self.context)
         shape = self.session.get_inputs()[0].shape
-        if len(shape) != 4 or shape[1:] != [frame_count(self.context) * FRAME_SHAPE[0], *FRAME_SHAPE[1:]]:
+        if len(shape) != 4 or shape[1:] != [count * FRAME_SHAPE[0], *FRAME_SHAPE[1:]]:
             raise ValueError(f'{path}: input shape does not match frame context {self.context}')
         self.modes = tuple(json.loads(metadata.get('mode_names', '[]')))
         self.outputs = [output.name for output in self.session.get_outputs()]

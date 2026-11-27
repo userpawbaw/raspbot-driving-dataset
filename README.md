@@ -145,3 +145,9 @@ python raspbot_receiver.py --model models/context/hybrid.onnx
 ## 학습된 ONNX 모델
 
 [시간 맥락 비교 실험](experiments/temporal-models/)에서 모델 16개, 평가 결과, Raspberry Pi 실행 방법을 확인할 수 있다.
+
+저장소 루트에서 최신 수신기로 실행할 수 있다.
+
+```bash
+python raspbot_receiver.py --model experiments/temporal-models/models/legacy_recent10.onnx --speed 60 --pan 15 --tilt 100
+```
